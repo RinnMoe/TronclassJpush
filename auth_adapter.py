@@ -1,14 +1,14 @@
-"""Authentication boundary for the JPush MVP.
+"""Generic authentication boundary for the JPush MVP.
 
-The monitor only needs an authenticated context. It must not know how an
-account is authenticated, where the service lives, or how credentials are
-stored. Other campus authentication SDKs can implement ``Authenticator``
-without changing the monitor.
+The monitor only needs an authenticated context. The concrete SDK module,
+factory and method names are supplied at runtime, so this repository does not
+contain campus-specific authentication details.
 """
 
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import sys
 from collections.abc import Callable, Mapping
@@ -33,7 +33,7 @@ class Authenticator(Protocol):
 
 
 class CallableAuthenticator:
-    """Adapt any external SDK login callable to ``Authenticator``."""
+    """Adapt any authentication callable to ``Authenticator``."""
 
     def __init__(self, authenticate: Callable[[], AuthContext]):
         self._authenticate = authenticate
@@ -42,59 +42,122 @@ class CallableAuthenticator:
         return self._authenticate()
 
 
-class CHUAuthAuthenticator:
-    """Demonstration adapter for the external ``CHUAuthSDK`` package."""
+class ExternalSdkAuthenticator:
+    """Adapt an externally supplied SDK object to ``Authenticator``."""
 
-    def __init__(self, auth_factory: Callable[[], Any]):
+    def __init__(
+        self,
+        auth_factory: Callable[[], Any],
+        login_method: str,
+        user_info_method: str,
+    ):
         self._auth_factory = auth_factory
+        self._login_method = login_method
+        self._user_info_method = user_info_method
 
     def authenticate(self) -> AuthContext:
         auth = self._auth_factory()
-        session = auth.login_interactive()
-        user_info = auth.get_user_info()
-        return AuthContext(session=session, user_info=user_info)
+        login = _require_callable(auth, self._login_method)
+        user_info_loader = _require_callable(auth, self._user_info_method)
+        session = login()
+        user_info = user_info_loader()
+        if not isinstance(user_info, Mapping):
+            raise TypeError("外部认证 SDK 的用户信息必须是映射对象。")
+        return AuthContext(session=session, user_info=dict(user_info))
 
 
-def _load_chu_auth_module(sdk_path: str | os.PathLike[str] | None = None) -> Any:
-    """Load the demo SDK without putting credentials or service URLs here.
+def _require_callable(target: Any, name: str) -> Callable[[], Any]:
+    value = getattr(target, name, None)
+    if not callable(value):
+        raise TypeError(f"外部认证对象缺少可调用方法：{name}")
+    return value
 
-    ``CHUAUTHSDK_PATH`` is the portable override. The explicit local path is
-    retained only as the requested demonstration integration for this machine;
-    a different SDK can be supplied by implementing ``Authenticator``.
-    """
 
-    candidates = []
+def _load_external_module(
+    module_name: str,
+    sdk_path: str | os.PathLike[str] | None = None,
+) -> Any:
     if sdk_path:
-        candidates.append(Path(sdk_path))
-
-    configured_path = os.environ.get("CHUAUTHSDK_PATH")
-    if configured_path:
-        candidates.append(Path(configured_path))
-
-    candidates.append(Path(r"E:\Sync\Github\CHUAuthSDK"))
-
-    for candidate in candidates:
-        if candidate.is_dir() and str(candidate) not in sys.path:
-            sys.path.insert(0, str(candidate))
+        path = Path(sdk_path)
+        if not path.is_dir():
+            raise RuntimeError(f"外部认证 SDK 路径不存在：{path}")
+        path_text = str(path)
+        if path_text not in sys.path:
+            sys.path.insert(0, path_text)
 
     try:
-        return importlib.import_module("CHUAuthSDK")
+        return importlib.import_module(module_name)
     except ImportError as exc:
         raise RuntimeError(
-            "无法加载 CHUAuthSDK；请安装该 SDK，或设置 CHUAUTHSDK_PATH。"
+            f"无法加载外部认证 SDK 模块：{module_name}；"
+            "请检查 SDK 路径和运行时依赖。"
         ) from exc
 
 
-def build_chu_authenticator(
-    sdk_path: str | os.PathLike[str] | None = None,
-) -> CHUAuthAuthenticator:
-    """Create the CHUAuthSDK demo adapter.
+def _parse_constructor_kwargs(
+    value: str | Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    if value is None:
+        value = os.environ.get("AUTH_SDK_CONSTRUCTOR_KWARGS", "{}")
+    if isinstance(value, Mapping):
+        return dict(value)
+    try:
+        parsed = json.loads(value)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            "AUTH_SDK_CONSTRUCTOR_KWARGS 必须是 JSON 对象。"
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise TypeError("AUTH_SDK_CONSTRUCTOR_KWARGS 必须是 JSON 对象。")
+    return parsed
 
-    The SDK owns the interactive credential flow. No username, password, CAS
-    URL, or business base URL is accepted by this project.
+
+def build_external_authenticator(
+    *,
+    module_name: str | None = None,
+    factory_name: str | None = None,
+    sdk_path: str | os.PathLike[str] | None = None,
+    login_method: str | None = None,
+    user_info_method: str | None = None,
+    constructor_kwargs: str | Mapping[str, Any] | None = None,
+) -> ExternalSdkAuthenticator:
+    """Build an adapter from runtime-only SDK configuration.
+
+    Every argument has a corresponding ``AUTH_SDK_*`` environment variable.
+    Module and factory names are intentionally required so no concrete SDK is
+    embedded in the repository.
     """
 
-    module = _load_chu_auth_module(sdk_path)
-    return CHUAuthAuthenticator(
-        lambda: module.CHUAuth(headless=True, verbose=True)
+    resolved_module = module_name or os.environ.get("AUTH_SDK_MODULE")
+    resolved_factory = factory_name or os.environ.get("AUTH_SDK_FACTORY")
+    resolved_login_method = login_method or os.environ.get("AUTH_SDK_LOGIN_METHOD")
+    resolved_user_info_method = user_info_method or os.environ.get(
+        "AUTH_SDK_USER_INFO_METHOD"
+    )
+    if not resolved_module or not resolved_factory:
+        raise RuntimeError(
+            "未配置外部认证 SDK；请设置 AUTH_SDK_MODULE 和 AUTH_SDK_FACTORY，"
+            "或通过命令行参数传入。"
+        )
+    if not resolved_login_method or not resolved_user_info_method:
+        raise RuntimeError(
+            "未配置外部认证方法；请设置 AUTH_SDK_LOGIN_METHOD 和 "
+            "AUTH_SDK_USER_INFO_METHOD，或通过命令行参数传入。"
+        )
+
+    module = _load_external_module(
+        resolved_module,
+        sdk_path or os.environ.get("AUTH_SDK_PATH"),
+    )
+    factory = getattr(module, resolved_factory, None)
+    if not callable(factory):
+        raise TypeError(
+            f"外部认证 SDK 模块没有可调用工厂：{resolved_factory}"
+        )
+
+    kwargs = _parse_constructor_kwargs(constructor_kwargs)
+    return ExternalSdkAuthenticator(
+        lambda: factory(**kwargs),
+        login_method=resolved_login_method,
+        user_info_method=resolved_user_info_method,
     )

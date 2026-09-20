@@ -18,7 +18,7 @@ from typing import Any, Protocol
 from jpush import (
     Client,
     FileStore,
-    NewJCore473Codec,
+    NewJCore453Codec,
     Push,
 )
 from jpush import Config as JPushClientConfig
@@ -35,6 +35,10 @@ class JPushConfig:
     app_key: str
     package_name: str
     channel: str
+    app_version: str
+    sdk_version: str
+    client_info: str = ""
+    reg_business: int = 0
 
     @classmethod
     def changke_demo(cls) -> JPushConfig:
@@ -42,6 +46,16 @@ class JPushConfig:
             app_key="15126da3dc13d1cbe847512b",
             package_name="com.wisdomgarden.trpc",
             channel="developer-default",
+            app_version="2.16.0",
+            sdk_version="5.2.2",
+            client_info=(
+                "14,34$$Redmi K30 Pro Zoom Edition$$"
+                "2.5.c1-50.1a-14515.23-0605_1248_d46c7e8c13,"
+                "2.5.c1-50.1a-14515.23-0605_1248_d46c7e8c13$$"
+                "lmipro$$developer-default$$5.2.2|||4.5.3$$0$$"
+                "1080*2400$$Xiaomi$$34&35"
+            ),
+            reg_business=1,
         )
 
 
@@ -144,7 +158,11 @@ class PythonJPushSource:
                 app_key=self._config.app_key,
                 package_name=self._config.package_name,
                 channel=self._config.channel,
-                codec=NewJCore473Codec(),
+                app_version=self._config.app_version,
+                sdk_version=self._config.sdk_version,
+                client_info=self._config.client_info,
+                reg_business=self._config.reg_business,
+                codec=NewJCore453Codec(),
                 store=FileStore(self._store_path),
                 servers=self._servers,
             )

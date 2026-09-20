@@ -6,7 +6,7 @@ import argparse
 from collections.abc import Iterable
 from typing import Any
 
-from auth_adapter import Authenticator, build_chu_authenticator
+from auth_adapter import Authenticator, build_external_authenticator
 from event_handler import handle_push_event
 from jpush_monitor import (
     JPushConfig,
@@ -19,8 +19,30 @@ from jpush_monitor import (
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="JPush 签到事件监测 MVP")
     parser.add_argument(
+        "--auth-sdk-path",
         "--sdk-path",
-        help="CHUAuthSDK 本地目录；未提供时使用 CHUAUTHSDK_PATH 或演示路径。",
+        dest="auth_sdk_path",
+        help="外部认证 SDK 目录；也可使用 AUTH_SDK_PATH。",
+    )
+    parser.add_argument(
+        "--auth-module",
+        help="外部认证 SDK 的 Python 模块名；也可使用 AUTH_SDK_MODULE。",
+    )
+    parser.add_argument(
+        "--auth-factory",
+        help="外部认证 SDK 的工厂或类名；也可使用 AUTH_SDK_FACTORY。",
+    )
+    parser.add_argument(
+        "--auth-login-method",
+        help="登录方法名；也可使用 AUTH_SDK_LOGIN_METHOD。",
+    )
+    parser.add_argument(
+        "--auth-user-info-method",
+        help="用户信息方法名；也可使用 AUTH_SDK_USER_INFO_METHOD。",
+    )
+    parser.add_argument(
+        "--auth-constructor-kwargs",
+        help="SDK 工厂构造参数 JSON；也可使用 AUTH_SDK_CONSTRUCTOR_KWARGS。",
     )
     parser.add_argument(
         "--alias",
@@ -77,7 +99,15 @@ def main(argv: list[str] | None = None) -> None:
             alias=args.alias,
             servers=args.server,
         )
-    run(build_chu_authenticator(args.sdk_path), source)
+    authenticator = build_external_authenticator(
+        module_name=args.auth_module,
+        factory_name=args.auth_factory,
+        sdk_path=args.auth_sdk_path,
+        login_method=args.auth_login_method,
+        user_info_method=args.auth_user_info_method,
+        constructor_kwargs=args.auth_constructor_kwargs,
+    )
+    run(authenticator, source)
 
 
 if __name__ == "__main__":
