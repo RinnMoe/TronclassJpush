@@ -1,0 +1,6 @@
+# Receive-only JPush/JCore client, directly integrated from the sibling project.
+-e E:/Sync/Github/jpush-python
+cryptography>=42
+
+# The demo adapter loads the external CHUAuthSDK from CHUAUTHSDK_PATH or its
+# configured local path; install that SDK and its own dependencies separately.
