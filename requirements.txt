@@ -1,4 +1,4 @@
 # Receive-only JPush/JCore client is vendored in the local jpush/ package.
 cryptography>=42
 
-# External authentication SDKs are loaded at runtime through AUTH_SDK_* values.
+# External authentication SDK configuration is loaded from config.json.

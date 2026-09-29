@@ -16,6 +16,7 @@ from typing import Any
 from .codecs import (
     CMD_TAG_ALIAS,
     CMD_TAG_ALIAS_V2,
+    CMD_TAGS_V2,
     IOS_VERSION_STRING,
     Codec,
     JHeadCodec,
@@ -97,8 +98,9 @@ class Config:
 class Client:
     """A JPush receive-only client.
 
-    Call :meth:`register` first, then :meth:`set_alias` and either
-    :meth:`wait_for_push` or :meth:`run`.  Network operations are synchronous;
+    Call :meth:`register` first, then optional :meth:`add_tags`/
+    :meth:`set_alias` and either :meth:`wait_for_push` or :meth:`run`.
+    Network operations are synchronous;
     one receiver thread and one heartbeat thread are started after login.
     """
 
@@ -482,6 +484,44 @@ class Client:
             self.log("alias %r set", alias)
             return
 
+    def add_tags(self, tags: Sequence[str], timeout: float | None = None) -> None:
+        """Bind this device to the supplied JPush tags.
+
+        JCore 4.x sends this as command ``0x1c`` with a JSON ``op=add``
+        action.  The values are deliberately supplied by the caller: they are
+        account/course-specific and must not be inferred or hardcoded here.
+        """
+
+        normalized = tuple(dict.fromkeys(tag for tag in tags if tag))
+        if not normalized:
+            return
+
+        deadline = _deadline(timeout)
+        action = self._tags_action(normalized)
+        try:
+            self._write(
+                self.codec.encode_set_tags(
+                    self._next_rid(),
+                    self.credentials.juid,
+                    self._sid,
+                    self.config.app_key,
+                    action,
+                )
+            )
+        except Exception as exc:
+            raise JPushError(f"jpush: add tags: {exc}") from exc
+
+        while True:
+            ack = self._next_ack(deadline)
+            if ack is None:
+                raise self._closed_error("jpush: add tags: connection closed")
+            if ack.request_command not in (CMD_TAGS_V2, CMD_TAG_ALIAS):
+                continue
+            if ack.status > 0:
+                raise JPushError(f"jpush: add tags rejected: status {ack.status}")
+            self.log("%d JPush tags set", len(normalized))
+            return
+
     def wait_for_push(
         self,
         match: Callable[[Push], bool] | None = None,
@@ -614,6 +654,14 @@ class Client:
             separators=(",", ":"),
         )
 
+    def _tags_action(self, tags: Sequence[str]) -> str:
+        platform = "i" if self.config.platform == PlatformIOS else "a"
+        return json.dumps(
+            {"op": "add", "platform": platform, "tags": list(tags)},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+
     def _log_register_request(self, request: bytes) -> None:
         """Emit bounded, password-free evidence for a cmd=0 request."""
 
@@ -674,6 +722,7 @@ class Client:
 
     # Go-source-compatible spellings.
     Register = register
+    AddTags = add_tags
     SetAlias = set_alias
     WaitForPush = wait_for_push
     Run = run

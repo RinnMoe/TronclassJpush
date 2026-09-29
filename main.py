@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any
 
-from auth_adapter import Authenticator, build_external_authenticator
+from account_binding import AccountBindingConfig, fetch_jpush_binding
+from auth_adapter import AuthContext, Authenticator, build_external_authenticator
 from event_handler import handle_push_event
 from jpush_monitor import (
     JPushConfig,
@@ -19,34 +20,15 @@ from jpush_monitor import (
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="JPush 签到事件监测 MVP")
     parser.add_argument(
-        "--auth-sdk-path",
-        "--sdk-path",
-        dest="auth_sdk_path",
-        help="外部认证 SDK 目录；也可使用 AUTH_SDK_PATH。",
-    )
-    parser.add_argument(
-        "--auth-module",
-        help="外部认证 SDK 的 Python 模块名；也可使用 AUTH_SDK_MODULE。",
-    )
-    parser.add_argument(
-        "--auth-factory",
-        help="外部认证 SDK 的工厂或类名；也可使用 AUTH_SDK_FACTORY。",
-    )
-    parser.add_argument(
-        "--auth-login-method",
-        help="登录方法名；也可使用 AUTH_SDK_LOGIN_METHOD。",
-    )
-    parser.add_argument(
-        "--auth-user-info-method",
-        help="用户信息方法名；也可使用 AUTH_SDK_USER_INFO_METHOD。",
-    )
-    parser.add_argument(
-        "--auth-constructor-kwargs",
-        help="SDK 工厂构造参数 JSON；也可使用 AUTH_SDK_CONSTRUCTOR_KWARGS。",
-    )
-    parser.add_argument(
         "--alias",
-        help="登录后要绑定的 JPush alias；不传则只完成设备注册。",
+        help="调试覆盖自动获取的 JPush alias；默认从登录账号自动获取。",
+    )
+    parser.add_argument(
+        "--tag",
+        dest="tags",
+        action="append",
+        default=[],
+        help="调试覆盖自动获取的 JPush tag；可重复传入，默认从登录账号自动获取。",
     )
     parser.add_argument(
         "--store",
@@ -68,8 +50,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def run(authenticator: Authenticator, source: Iterable[Any]) -> None:
-    """Run the monitor with injected authentication and push transport."""
+def run(
+    authenticator: Authenticator,
+    source: Iterable[Any] | Callable[[AuthContext], Iterable[Any]],
+) -> None:
+    """Authenticate first, then create the account-aware push source."""
 
     print("通过外部认证 SDK 获取身份；主程序不读取账号、密码或业务地址。")
     context = authenticator.authenticate()
@@ -80,34 +65,52 @@ def run(authenticator: Authenticator, source: Iterable[Any]) -> None:
     )
     print(f"统一身份认证完成：{display_name}")
 
+    resolved_source = source(context) if callable(source) else source
+
     JPushMonitor(
-        config=JPushConfig.changke_demo(),
-        source=source,
+        config=JPushConfig.tronclass_demo(),
+        source=resolved_source,
         handler=handle_push_event,
     ).run()
 
 
 def main(argv: list[str] | None = None) -> None:
     args = build_argument_parser().parse_args(argv)
-    config = JPushConfig.changke_demo()
-    if args.stdin:
-        source = JsonLineJPushSource()
-    else:
-        source = PythonJPushSource(
+    config = JPushConfig.tronclass_demo()
+    authenticator = build_external_authenticator()
+
+    def build_source(context: AuthContext) -> Iterable[Any]:
+        if args.stdin:
+            return JsonLineJPushSource()
+
+        if args.alias is not None or args.tags:
+            alias = args.alias or ""
+            tags = tuple(args.tags)
+            print(
+                "使用命令行 JPush 绑定覆盖："
+                f"tags={len(tags)}，alias={'yes' if alias else 'no'}"
+            )
+        else:
+            binding = fetch_jpush_binding(
+                context.session,
+                AccountBindingConfig.tronclass_demo(),
+            )
+            alias = binding.alias
+            tags = binding.tags
+            print(
+                "已从登录账号获取 JPush 绑定："
+                f"tags={len(tags)}，alias=yes"
+            )
+
+        return PythonJPushSource(
             config=config,
             store_path=args.store,
-            alias=args.alias,
+            alias=alias or None,
+            tags=tags,
             servers=args.server,
         )
-    authenticator = build_external_authenticator(
-        module_name=args.auth_module,
-        factory_name=args.auth_factory,
-        sdk_path=args.auth_sdk_path,
-        login_method=args.auth_login_method,
-        user_info_method=args.auth_user_info_method,
-        constructor_kwargs=args.auth_constructor_kwargs,
-    )
-    run(authenticator, source)
+
+    run(authenticator, build_source)
 
 
 if __name__ == "__main__":

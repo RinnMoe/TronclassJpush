@@ -41,7 +41,7 @@ class JPushConfig:
     reg_business: int = 0
 
     @classmethod
-    def changke_demo(cls) -> JPushConfig:
+    def tronclass_demo(cls) -> JPushConfig:
         return cls(
             app_key="15126da3dc13d1cbe847512b",
             package_name="com.wisdomgarden.trpc",
@@ -101,6 +101,7 @@ class PythonJPushSource:
         config: JPushConfig,
         store_path: str,
         alias: str | None = None,
+        tags: Sequence[str] = (),
         servers: Sequence[str] = (),
         register_timeout: float = 30.0,
         initial_backoff: float = 1.0,
@@ -109,6 +110,7 @@ class PythonJPushSource:
         self._config = config
         self._store_path = store_path
         self._alias = alias
+        self._tags = tuple(tags)
         self._servers = tuple(servers)
         self._register_timeout = register_timeout
         self._initial_backoff = initial_backoff
@@ -124,9 +126,16 @@ class PythonJPushSource:
                 self._client = client
                 try:
                     credentials = client.register(timeout=self._register_timeout)
+                    if self._tags:
+                        client.add_tags(self._tags, timeout=self._register_timeout)
                     if self._alias:
                         client.set_alias(self._alias, timeout=self._register_timeout)
-                    print(f"JPush 接收连接已就绪：reg_id={credentials.reg_id}")
+                    print(
+                        "JPush 接收连接已就绪："
+                        f"reg_id={credentials.reg_id}，"
+                        f"tags={len(self._tags)}，"
+                        f"alias={'yes' if self._alias else 'no'}"
+                    )
                     backoff = self._initial_backoff
 
                     while not self._closed.is_set():
@@ -134,7 +143,10 @@ class PythonJPushSource:
                             push = client.wait_for_push(timeout=1.0)
                         except TimeoutError:
                             continue
-                        yield self._push_payload(push)
+                        payload = self._push_payload(push)
+                        if payload is None:
+                            continue
+                        yield payload
                 except Exception as exc:  # noqa: BLE001 - retry transport/library failures
                     if self._closed.is_set():
                         return
@@ -169,11 +181,12 @@ class PythonJPushSource:
         )
 
     @staticmethod
-    def _push_payload(push: Push) -> Mapping[str, Any]:
+    def _push_payload(push: Push) -> Mapping[str, Any] | None:
         try:
             return push.fields()
-        except (TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise ValueError(f"JPush content 不是有效对象：{exc}") from exc
+        except (TypeError, ValueError):
+            print(push.content)
+            return None
 
 
 def _decode_payload(payload: Any) -> Mapping[str, Any]:

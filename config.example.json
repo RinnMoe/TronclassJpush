@@ -1,0 +1,10 @@
+{
+  "auth_sdk": {
+    "path": "<sdk-directory>",
+    "module": "<module-name>",
+    "factory": "<factory-or-class-name>",
+    "login_method": "<login-method>",
+    "user_info_method": "<user-info-method>",
+    "constructor_kwargs": {}
+  }
+}

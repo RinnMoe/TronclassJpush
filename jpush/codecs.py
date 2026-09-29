@@ -41,12 +41,14 @@ CMD_PUSH_MESSAGE = 3
 CMD_PUSH_RECEIVED = 4
 CMD_TAG_ALIAS = 10
 CMD_ACK = 19
+CMD_TAGS_V2 = 28
 CMD_TAG_ALIAS_V2 = 29
 
 VER_REGISTER = 7
 VER_LOGIN = 1
 VER_HEARTBEAT = 1
 VER_PUSH_RECEIVED = 1
+VER_TAGS = 1
 VER_TAG_ALIAS = 2
 
 PLATFORM_ANDROID_BYTE = 2
@@ -61,6 +63,10 @@ class Codec(Protocol):
     def encode_login(self, rid: int, juid: int, params: LoginParams) -> bytes: ...
 
     def encode_set_alias(
+        self, rid: int, juid: int, sid: int, app_key: str, action: str
+    ) -> bytes: ...
+
+    def encode_set_tags(
         self, rid: int, juid: int, sid: int, app_key: str, action: str
     ) -> bytes: ...
 
@@ -125,6 +131,24 @@ class JHeadCodec:
         )
 
     def encode_set_alias(
+        self, rid: int, juid: int, sid: int, app_key: str, action: str
+    ) -> bytes:
+        writer = Writer()
+        writer.tlv2(app_key)
+        writer.tlv2(action)
+        return frame(
+            Head(
+                request=True,
+                version=VER_TAG_ALIAS,
+                command=CMD_TAG_ALIAS,
+                rid=rid,
+                sid=sid,
+                juid=juid,
+            ),
+            writer.buf,
+        )
+
+    def encode_set_tags(
         self, rid: int, juid: int, sid: int, app_key: str, action: str
     ) -> bytes:
         writer = Writer()
@@ -233,6 +257,7 @@ class JHeadCodec:
     EncodeRegister = encode_register
     EncodeLogin = encode_login
     EncodeSetAlias = encode_set_alias
+    EncodeSetTags = encode_set_tags
     EncodeHeartbeat = encode_heartbeat
     EncodePushAck = encode_push_ack
     Decode = decode
@@ -349,6 +374,8 @@ class JCore4Codec:
     def _head_version(self, command: int) -> int:
         if self.ios and command == CMD_REGISTER:
             return JCORE_VERSION_IOS
+        if command == CMD_TAGS_V2:
+            return VER_TAGS
         if command == CMD_TAG_ALIAS_V2:
             return VER_TAG_ALIAS
         return JCORE_VERSION_ANDROID
@@ -425,6 +452,13 @@ class JCore4Codec:
         writer = Writer()
         writer.tlv2(action)
         return self._frame(CMD_TAG_ALIAS_V2, rid, juid, sid, juid, bytes(writer.buf))
+
+    def encode_set_tags(
+        self, rid: int, juid: int, sid: int, app_key: str, action: str
+    ) -> bytes:
+        writer = Writer()
+        writer.tlv2(action)
+        return self._frame(CMD_TAGS_V2, rid, juid, sid, juid, bytes(writer.buf))
 
     def encode_heartbeat(self, rid: int, juid: int, sid: int) -> bytes:
         return self._frame(CMD_HEARTBEAT, rid, juid, 0, juid, b"")
@@ -537,6 +571,18 @@ class JCore4Codec:
             _raise_reader_error(reader)
             return Ack(request_command=CMD_TAG_ALIAS_V2, status=status)
 
+        if command == CMD_TAGS_V2:
+            payload = reader.tlv2()
+            status = 0
+            try:
+                parsed = json.loads(payload)
+                if isinstance(parsed, dict):
+                    status = int(parsed.get("code", 0))
+            except (TypeError, ValueError):
+                status = 0
+            _raise_reader_error(reader)
+            return Ack(request_command=CMD_TAGS_V2, status=status)
+
         if command == CMD_TAG_ALIAS:
             result = Ack(request_command=CMD_TAG_ALIAS, status=reader.int2())
             _raise_reader_error(reader)
@@ -550,6 +596,7 @@ class JCore4Codec:
     EncodeRegister = encode_register
     EncodeLogin = encode_login
     EncodeSetAlias = encode_set_alias
+    EncodeSetTags = encode_set_tags
     EncodeHeartbeat = encode_heartbeat
     EncodePushAck = encode_push_ack
     Decode = decode
