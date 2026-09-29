@@ -2,6 +2,7 @@
 
 一个通过Jpush长连接接收Tronclass签到、通知等事件的概念验证项目，用于替换轮询监测方式。本项目负责完成设备注册、保持接收连接、解析 Push 事件并输出结果；
 
+本项目基于python重写的[jpush-go](https://github.com/thibauddavid/jpush-go)实现。
 ## 项目边界
 
 - 直接使用本地 `jpush/` 包完成 JCore 注册、登录、心跳和 Push 接收。
