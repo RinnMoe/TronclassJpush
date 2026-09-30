@@ -246,6 +246,19 @@ def _first_field(payload: Mapping[str, Any], names: tuple[str, ...]) -> str | No
 
 
 def _event_type(payload: Mapping[str, Any]) -> str | None:
+    for value in _walk_values(payload):
+        if not isinstance(value, Mapping):
+            continue
+        for key in ("extras", "n_extras"):
+            extras = value.get(key)
+            if not isinstance(extras, Mapping):
+                continue
+            title = extras.get("title")
+            if isinstance(title, str):
+                candidate = title.strip().upper()
+                if candidate in ROLLCALL_EVENT_TYPES:
+                    return candidate
+
     candidates = [value.upper() for value in _field_values(
         payload,
         ("title", "event", "eventType", "event_type", "type", "message"),
